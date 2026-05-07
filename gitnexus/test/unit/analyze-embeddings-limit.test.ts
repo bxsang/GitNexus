@@ -18,9 +18,15 @@ vi.mock('../../src/storage/repo-manager.js', () => ({
   assertAnalysisFinalized: vi.fn(async () => undefined),
 }));
 
-vi.mock('../../src/storage/git.js', () => ({
-  getGitRoot: vi.fn(() => '/repo'),
-  hasGitDir: vi.fn(() => true),
+vi.mock('../../src/storage/vcs.js', () => ({
+  detectVcs: vi.fn(() => ({
+    kind: 'git',
+    isAvailable: () => true,
+    getCurrentRevision: () => 'abc123',
+    getRemoteUrl: () => undefined,
+    getRoot: () => '/repo',
+    getCanonicalRoot: () => '/repo',
+  })),
 }));
 
 vi.mock('../../src/core/ingestion/utils/max-file-size.js', () => ({

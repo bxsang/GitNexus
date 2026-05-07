@@ -41,6 +41,10 @@ program
     'Treat the provided path/cwd as the index root and skip parent git-root discovery',
   )
   .option(
+    '--skip-vcs',
+    'Alias for --skip-git that also bypasses .svn detection',
+  )
+  .option(
     '--name <alias>',
     'Register this repo under a custom name in ~/.gitnexus/registry.json ' +
       '(disambiguates repos whose paths share a basename, e.g. two different .../app folders)',
@@ -84,6 +88,10 @@ program
   )
   .option('-f, --force', 'Register even if meta.json is missing (stats will be empty)')
   .option('--allow-non-git', 'Allow registering folders that are not Git repositories')
+  .option(
+    '--allow-non-vcs',
+    'Alias for --allow-non-git that also accepts folders without a .svn directory',
+  )
   .action(createLazyAction(() => import('./index-repo.js'), 'indexCommand'));
 
 program

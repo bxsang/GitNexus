@@ -17,11 +17,13 @@ import {
   ensureGitNexusIgnored,
   registerRepo,
 } from '../storage/repo-manager.js';
-import { getGitRoot, getRemoteUrl, isGitRepo } from '../storage/git.js';
+import { detectVcs } from '../storage/vcs.js';
 
 export interface IndexOptions {
   force?: boolean;
   allowNonGit?: boolean;
+  /** Alias for `allowNonGit` that also covers `.svn` working copies. */
+  allowNonVcs?: boolean;
 }
 
 export const indexCommand = async (inputPathParts?: string[], options?: IndexOptions) => {
@@ -43,23 +45,27 @@ export const indexCommand = async (inputPathParts?: string[], options?: IndexOpt
     }
   }
 
+  const allowNonVcs = !!(options?.allowNonGit || options?.allowNonVcs);
+
   let repoPath: string;
   if (inputPath) {
     repoPath = path.resolve(inputPath);
   } else {
-    const gitRoot = getGitRoot(process.cwd());
-    if (!gitRoot) {
-      console.log('  Not inside a git repository, try to run git init\n');
+    const cwdVcs = detectVcs(process.cwd());
+    const vcsRoot = cwdVcs?.getRoot(process.cwd()) ?? null;
+    if (!vcsRoot) {
+      console.log('  Not inside a git or svn working copy, try to run git init\n');
       process.exitCode = 1;
       return;
     }
-    repoPath = gitRoot;
+    repoPath = vcsRoot;
   }
 
-  if (!options?.allowNonGit && !isGitRepo(repoPath)) {
-    console.log(`  Not a git repository: ${repoPath}`);
+  const detectedVcs = detectVcs(repoPath);
+  if (!allowNonVcs && !detectedVcs) {
+    console.log(`  Not a git or svn working copy: ${repoPath}`);
     console.log('  Initialize one with `git init` or choose a valid repo path.\n');
-    console.log('  Or use --allow-non-git to register an existing .gitnexus index anyway.\n');
+    console.log('  Or use --allow-non-vcs to register an existing .gitnexus index anyway.\n');
     process.exitCode = 1;
     return;
   }
@@ -110,9 +116,15 @@ export const indexCommand = async (inputPathParts?: string[], options?: IndexOpt
   // Refresh the on-disk meta with a freshly captured `remoteUrl` if
   // it's missing, so an `index` of an older `.gitnexus/` still gets
   // sibling-clone fingerprinting on subsequent use without forcing a
-  // full re-analyze.
-  if (!meta.remoteUrl && isGitRepo(repoPath)) {
-    meta.remoteUrl = getRemoteUrl(repoPath);
+  // full re-analyze. Also stamp the `vcsType` so legacy meta.json
+  // files (written before SVN support) carry the field forward.
+  if (detectedVcs) {
+    if (!meta.remoteUrl) {
+      meta.remoteUrl = detectedVcs.getRemoteUrl(repoPath);
+    }
+    if (!meta.vcsType) {
+      meta.vcsType = detectedVcs.kind;
+    }
   }
   await registerRepo(repoPath, meta);
   await ensureGitNexusIgnored(repoPath);

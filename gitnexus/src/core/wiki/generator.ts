@@ -65,6 +65,13 @@ export interface WikiOptions {
   concurrency?: number;
   /** If true, stop after building module tree for user review */
   reviewOnly?: boolean;
+  /**
+   * Skip the incremental-update path even when a prior `fromCommit`
+   * is available. Used by VCS backends that don't support `git diff`
+   * (e.g. SVN), where the only safe option is to regenerate every
+   * page each run.
+   */
+  forceFullRegen?: boolean;
 }
 
 export interface WikiMeta {
@@ -233,7 +240,12 @@ export class WikiGenerator {
 
     let result: WikiRunResult;
     try {
-      if (!forceMode && existingMeta && existingMeta.fromCommit) {
+      if (
+        !forceMode &&
+        !this.options.forceFullRegen &&
+        existingMeta &&
+        existingMeta.fromCommit
+      ) {
         result = await this.incrementalUpdate(existingMeta, currentCommit);
       } else {
         result = await this.fullGeneration(currentCommit);

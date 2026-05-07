@@ -11,6 +11,7 @@ import { realpathSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { getInferredRepoName, resolveRepoIdentityRoot } from './git.js';
+import type { VcsKind } from './vcs.js';
 
 /**
  * Normalise a repo path for registry comparison across platforms
@@ -63,6 +64,12 @@ export interface RepoMeta {
    * treated as path-only and sibling-clone detection is skipped.
    */
   remoteUrl?: string;
+  /**
+   * VCS backend that produced `lastCommit` and `remoteUrl`. Optional
+   * for back-compat with meta.json files written before SVN support;
+   * read sites default to `'git'` when absent.
+   */
+  vcsType?: VcsKind;
   stats?: {
     files?: number;
     nodes?: number;
@@ -92,6 +99,8 @@ export interface RegistryEntry {
   lastCommit: string;
   /** See {@link RepoMeta.remoteUrl}. Mirrored from meta at register time. */
   remoteUrl?: string;
+  /** See {@link RepoMeta.vcsType}. Mirrored from meta at register time. */
+  vcsType?: VcsKind;
   stats?: RepoMeta['stats'];
 }
 
@@ -520,6 +529,7 @@ export const registerRepo = async (
     indexedAt: meta.indexedAt,
     lastCommit: meta.lastCommit,
     remoteUrl: meta.remoteUrl,
+    vcsType: meta.vcsType,
     stats: meta.stats,
   };
 

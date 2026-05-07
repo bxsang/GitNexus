@@ -6,7 +6,8 @@
 import { execFileSync } from 'node:child_process';
 import path from 'path';
 import { readRegistry, type RegistryEntry, type CwdMatch } from '../storage/repo-manager.js';
-import { findGitRootByDotGit, getCurrentCommit, getRemoteUrl } from '../storage/git.js';
+import { getCurrentCommit } from '../storage/git.js';
+import { detectVcs } from '../storage/vcs.js';
 
 export interface StalenessInfo {
   isStale: boolean;
@@ -101,13 +102,19 @@ export async function checkCwdMatch(cwd: string): Promise<CwdMatch> {
   }
   if (bestPath) return { match: 'path', entry: bestPath };
 
-  // 2) Sibling-by-remote: locate the cwd's git root using only ancestor
-  //    `.git` checks before shelling out. This keeps MCP startup from
-  //    running git in an unrelated launch cwd such as $HOME (#1138).
-  const cwdGitRoot = findGitRootByDotGit(cwdResolved);
+  // 2) Sibling-by-remote: detect the cwd's VCS via ancestor `.git`/`.svn`
+  //    markers before shelling out. The filesystem pre-check keeps MCP
+  //    startup from running git in an unrelated launch cwd such as
+  //    $HOME (#1138). For SVN cwds the rest of this branch produces a
+  //    `match: 'none'` (no SVN drift comparison) because we don't ship
+  //    SVN-aware ahead-counting in the MVP.
+  const vcs = detectVcs(cwdResolved);
+  if (!vcs) return { match: 'none' };
+
+  const cwdGitRoot = vcs.getRoot(cwdResolved);
   if (!cwdGitRoot) return { match: 'none' };
 
-  const cwdRemote = getRemoteUrl(cwdGitRoot);
+  const cwdRemote = vcs.getRemoteUrl(cwdGitRoot);
   if (!cwdRemote) return { match: 'none' };
 
   const sibling = entries.find(
@@ -115,8 +122,13 @@ export async function checkCwdMatch(cwd: string): Promise<CwdMatch> {
   );
   if (!sibling) return { match: 'none' };
 
-  const cwdHead = getCurrentCommit(cwdGitRoot) || undefined;
-  const drift = commitsAheadOfIndexed(cwdGitRoot, sibling.lastCommit);
+  // Drift counting is git-only (uses `git rev-list`). For SVN we still
+  // report the sibling match but skip the ahead/behind comparison, so
+  // callers see "the index lives elsewhere" without a misleading drift
+  // hint shaped around git's history model.
+  const cwdHead = vcs.kind === 'git' ? getCurrentCommit(cwdGitRoot) || undefined : undefined;
+  const drift =
+    vcs.kind === 'git' ? commitsAheadOfIndexed(cwdGitRoot, sibling.lastCommit) : undefined;
 
   // Same commit on both clones → still report match=sibling-by-remote
   // (the relationship is real and useful to callers like list_repos /

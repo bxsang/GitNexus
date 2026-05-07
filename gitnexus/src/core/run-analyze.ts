@@ -31,12 +31,11 @@ import {
   cleanupOldKuzuFiles,
 } from '../storage/repo-manager.js';
 import {
-  getCurrentCommit,
-  getRemoteUrl,
   hasGitDir,
   getInferredRepoName,
   resolveRepoIdentityRoot,
 } from '../storage/git.js';
+import { detectVcs } from '../storage/vcs.js';
 import type { CachedEmbedding } from './embeddings/types.js';
 import { generateAIContextFiles } from '../cli/ai-context.js';
 import { EMBEDDING_TABLE_NAME } from './lbug/schema.js';
@@ -173,7 +172,11 @@ export async function runFullAnalysis(
   }
 
   const repoHasGit = hasGitDir(repoPath);
-  const currentCommit = repoHasGit ? getCurrentCommit(repoPath) : '';
+  // Detect the VCS backing this path (git or svn). Falls back to the
+  // legacy git-only path when no marker is found, preserving existing
+  // --skip-git semantics.
+  const vcs = detectVcs(repoPath);
+  const currentCommit = vcs ? vcs.getCurrentRevision(repoPath) : '';
   const existingMeta = await loadMeta(storagePath);
 
   // ── Early-return: already up to date ──────────────────────────────
@@ -461,10 +464,11 @@ export async function runFullAnalysis(
       // Captured here (not at registration) so it travels with the
       // on-disk meta.json — sibling-clone fingerprinting works for
       // out-of-tree consumers (group-status, future tooling) without
-      // a second git shellout. `undefined` when the repo has no
-      // origin remote, which is fine: paths-only repos behave as
-      // before.
-      remoteUrl: hasGitDir(repoPath) ? getRemoteUrl(repoPath) : undefined,
+      // a second VCS shellout. `undefined` when the repo has no
+      // remote (or is not a working copy), which is fine: paths-only
+      // repos behave as before.
+      remoteUrl: vcs?.getRemoteUrl(repoPath),
+      vcsType: vcs?.kind,
       stats: {
         files: pipelineResult.totalFileCount,
         nodes: stats.nodes,

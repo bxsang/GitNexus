@@ -6,8 +6,18 @@ const mockGetStoragePaths = vi.fn();
 const mockLoadMeta = vi.fn();
 const mockRegisterRepo = vi.fn();
 const mockEnsureGitNexusIgnored = vi.fn();
-const mockGetGitRoot = vi.fn();
-const mockIsGitRepo = vi.fn();
+const mockDetectVcs = vi.fn();
+
+const makeAdapter = (root: string | null) => ({
+  kind: 'git' as const,
+  isAvailable: () => root !== null,
+  getCurrentRevision: () => '',
+  // Tests don't care about the remote URL — a static `undefined`
+  // keeps the index-repo backfill path a no-op.
+  getRemoteUrl: () => undefined,
+  getRoot: () => root,
+  getCanonicalRoot: () => root,
+});
 
 vi.mock('fs/promises', () => ({
   default: {
@@ -22,14 +32,8 @@ vi.mock('../../src/storage/repo-manager.js', () => ({
   ensureGitNexusIgnored: mockEnsureGitNexusIgnored,
 }));
 
-vi.mock('../../src/storage/git.js', () => ({
-  getGitRoot: mockGetGitRoot,
-  isGitRepo: mockIsGitRepo,
-  // `index-repo.ts` calls `getRemoteUrl` to backfill `remoteUrl` on
-  // older `.gitnexus/meta.json` files. The unit tests don't care
-  // about the remote URL, so a static `undefined` keeps behaviour
-  // identical to the pre-feature path.
-  getRemoteUrl: vi.fn().mockReturnValue(undefined),
+vi.mock('../../src/storage/vcs.js', () => ({
+  detectVcs: mockDetectVcs,
 }));
 
 describe('indexCommand', () => {
@@ -54,20 +58,23 @@ describe('indexCommand', () => {
     });
     mockAccess.mockResolvedValue(undefined);
     mockEnsureGitNexusIgnored.mockResolvedValue(undefined);
-    mockGetGitRoot.mockReturnValue(resolvedRepo);
-    mockIsGitRepo.mockReturnValue(true);
+    // Default: cwd and explicit paths both resolve to `/repo`, treated
+    // as a git working copy. Individual tests override.
+    mockDetectVcs.mockImplementation(() => makeAdapter(resolvedRepo));
   });
 
   it('fails when target path is not a git repository', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mockIsGitRepo.mockReturnValue(false);
+    mockDetectVcs.mockImplementation(() => null);
 
     const { indexCommand } = await import('../../src/cli/index-repo.js');
     await indexCommand(['/outside/path']);
 
     expect(mockRegisterRepo).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
-    expect(logSpy).toHaveBeenCalledWith(`  Not a git repository: ${resolvedOutside}`);
+    expect(logSpy).toHaveBeenCalledWith(
+      `  Not a git or svn working copy: ${resolvedOutside}`,
+    );
   });
 
   it('fails when .gitnexus folder does not exist', async () => {
@@ -140,7 +147,7 @@ describe('indexCommand', () => {
   });
 
   it('registers non-git path when --allow-non-git is set', async () => {
-    mockIsGitRepo.mockReturnValue(false);
+    mockDetectVcs.mockImplementation(() => null);
 
     const { indexCommand } = await import('../../src/cli/index-repo.js');
     await indexCommand(['/outside/path'], { allowNonGit: true });
@@ -151,18 +158,20 @@ describe('indexCommand', () => {
 
   it('fails when called with no path and cwd is not inside a git repo', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mockGetGitRoot.mockReturnValue(null);
+    mockDetectVcs.mockImplementation(() => null);
 
     const { indexCommand } = await import('../../src/cli/index-repo.js');
     await indexCommand(); // no args
 
     expect(mockRegisterRepo).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
-    expect(logSpy).toHaveBeenCalledWith('  Not inside a git repository, try to run git init\n');
+    expect(logSpy).toHaveBeenCalledWith(
+      '  Not inside a git or svn working copy, try to run git init\n',
+    );
   });
 
   it('registers from cwd when no path is provided', async () => {
-    // getGitRoot already mocked to return resolvedRepo in beforeEach
+    // detectVcs already mocked to return a `/repo` adapter in beforeEach
     const { indexCommand } = await import('../../src/cli/index-repo.js');
     await indexCommand(); // no args
 

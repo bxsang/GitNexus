@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { statSync } from 'fs';
 import path from 'path';
+import type { VcsAdapter } from './vcs.js';
 
 // Git utilities for repository detection, commit tracking, and diff analysis
 
@@ -297,6 +298,21 @@ export interface FileDiff {
  * Parse unified diff output (with -U0) into per-file hunk ranges.
  * Extracts the new-file line ranges from @@ hunk headers.
  */
+/**
+ * Adapter wrapper around the git utilities exported above. Lets
+ * VCS-agnostic callers (run-analyze, git-staleness) dispatch through
+ * `VcsAdapter` instead of importing git directly. All existing
+ * named exports remain — this is purely additive for back-compat.
+ */
+export const gitAdapter: VcsAdapter = {
+  kind: 'git',
+  isAvailable: isGitRepo,
+  getCurrentRevision: getCurrentCommit,
+  getRemoteUrl,
+  getRoot: getGitRoot,
+  getCanonicalRoot: getCanonicalRepoRoot,
+};
+
 export function parseDiffHunks(diffOutput: string): FileDiff[] {
   const files: FileDiff[] = [];
   let current: FileDiff | null = null;

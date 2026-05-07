@@ -20,7 +20,7 @@ import {
   AnalysisNotFinalizedError,
   assertAnalysisFinalized,
 } from '../storage/repo-manager.js';
-import { getGitRoot, hasGitDir } from '../storage/git.js';
+import { detectVcs } from '../storage/vcs.js';
 import { runFullAnalysis } from '../core/run-analyze.js';
 import { getMaxFileSizeBannerMessage } from '../core/ingestion/utils/max-file-size.js';
 import { warnMissingOptionalGrammars } from './optional-grammars.js';
@@ -119,6 +119,12 @@ export interface AnalyzeOptions {
   noStats?: boolean;
   /** Index the folder even when no .git directory is present. */
   skipGit?: boolean;
+  /**
+   * Alias for `--skip-git` that also covers `.svn` working copies.
+   * Either flag bypasses the VCS detection gate; both are honoured
+   * for back-compat with scripts that already pass `--skip-git`.
+   */
+  skipVcs?: boolean;
   /**
    * Override the default basename-derived registry `name` with a
    * user-supplied alias (#829). Disambiguates repos whose paths share a
@@ -243,35 +249,44 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
 
   console.log('\n  GitNexus Analyzer\n');
 
+  const skipVcs = !!(options?.skipGit || options?.skipVcs);
+
   let repoPath: string;
   if (inputPath) {
     repoPath = path.resolve(inputPath);
-  } else if (options?.skipGit) {
-    // --skip-git: treat cwd as the index root, do not walk up to a parent git repo.
+  } else if (skipVcs) {
+    // --skip-git / --skip-vcs: treat cwd as the index root, do not walk
+    // up to a parent VCS working copy.
     repoPath = path.resolve(process.cwd());
   } else {
-    const gitRoot = getGitRoot(process.cwd());
-    if (!gitRoot) {
+    const vcsRoot = detectVcs(process.cwd())?.getRoot(process.cwd()) ?? null;
+    if (!vcsRoot) {
       console.log(
-        '  Not inside a git repository.\n  Tip: pass --skip-git to index any folder without a .git directory.\n',
+        '  Not inside a git or svn working copy.\n' +
+          '  Tip: pass --skip-git or --skip-vcs to index any folder without a .git or .svn directory.\n',
       );
       process.exitCode = 1;
       return;
     }
-    repoPath = gitRoot;
+    repoPath = vcsRoot;
   }
 
-  const repoHasGit = hasGitDir(repoPath);
-  if (!repoHasGit && !options?.skipGit) {
+  const detectedVcs = detectVcs(repoPath);
+  if (!detectedVcs && !skipVcs) {
     console.log(
-      '  Not a git repository.\n  Tip: pass --skip-git to index any folder without a .git directory.\n',
+      '  Not a git or svn working copy.\n' +
+        '  Tip: pass --skip-git or --skip-vcs to index any folder without a .git or .svn directory.\n',
     );
     process.exitCode = 1;
     return;
   }
-  if (!repoHasGit) {
+  if (!detectedVcs) {
     console.log(
-      '  Warning: no .git directory found \u2014 commit-tracking and incremental updates disabled.\n',
+      '  Warning: no .git or .svn directory found \u2014 commit-tracking and incremental updates disabled.\n',
+    );
+  } else if (detectedVcs.kind === 'svn') {
+    console.log(
+      '  SVN working copy detected \u2014 indexing in full re-index mode (incremental updates unsupported).\n',
     );
   }
 
@@ -393,7 +408,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
         embeddings: embeddingsEnabled,
         embeddingsNodeLimit,
         dropEmbeddings: options?.dropEmbeddings,
-        skipGit: options?.skipGit,
+        skipGit: skipVcs,
         skipAgentsMd: options?.skipAgentsMd,
         noStats: options?.noStats,
         registryName: options?.name,

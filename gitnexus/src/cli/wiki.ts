@@ -9,7 +9,7 @@ import path from 'path';
 import readline from 'readline';
 import { execSync, execFileSync } from 'child_process';
 import cliProgress from 'cli-progress';
-import { getGitRoot, isGitRepo } from '../storage/git.js';
+import { detectVcs } from '../storage/vcs.js';
 import {
   getStoragePaths,
   loadMeta,
@@ -98,17 +98,19 @@ export const wikiCommand = async (inputPath?: string, options?: WikiCommandOptio
   if (inputPath) {
     repoPath = path.resolve(inputPath);
   } else {
-    const gitRoot = getGitRoot(process.cwd());
-    if (!gitRoot) {
-      console.log('  Error: Not inside a git repository\n');
+    const cwdVcs = detectVcs(process.cwd());
+    const vcsRoot = cwdVcs?.getRoot(process.cwd()) ?? null;
+    if (!vcsRoot) {
+      console.log('  Error: Not inside a git or svn working copy\n');
       process.exitCode = 1;
       return;
     }
-    repoPath = gitRoot;
+    repoPath = vcsRoot;
   }
 
-  if (!isGitRepo(repoPath)) {
-    console.log('  Error: Not a git repository\n');
+  const repoVcs = detectVcs(repoPath);
+  if (!repoVcs) {
+    console.log('  Error: Not a git or svn working copy\n');
     process.exitCode = 1;
     return;
   }
@@ -378,10 +380,15 @@ export const wikiCommand = async (inputPath?: string, options?: WikiCommandOptio
   }, 1000);
 
   // ── Run generator ───────────────────────────────────────────────────
+  // SVN working copies skip the incremental update path: the wiki's
+  // incremental branch needs `git diff` and merge-base reachability,
+  // neither of which the minimal SVN MVP supports. Forcing a full
+  // regeneration is the safe default.
   const wikiOptions: WikiOptions = {
     force: options?.force,
     concurrency: options?.concurrency ? parseInt(options.concurrency, 10) : undefined,
     reviewOnly: options?.review,
+    forceFullRegen: repoVcs.kind === 'svn',
   };
 
   const generator = new WikiGenerator(
